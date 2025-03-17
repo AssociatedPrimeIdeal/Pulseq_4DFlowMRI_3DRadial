@@ -131,136 +131,7 @@ class MRISequence:
             M1 = p1 / p2
         return M0, M1
 
-    def prep(self, M1):
-        rf_1, gz, _ = pp.make_sinc_pulse(
-            flip_angle=self.FA * np.pi / 180,
-            duration=0.6e-3,
-            slice_thickness=self.FOVz,
-            apodization=0.42,
-            time_bw_product=self.tbw,
-            system=self.sys,
-            return_gz=True
-        )
-        M0z_reph, M1z_reph = self.CalTrapM1(gz.amplitude / self.sys.gamma * 1e3,
-                                            gz.flat_time * 1000 / 2,
-                                            gz.rise_time * 1000,
-                                            0.00,
-                                            second_half=True)
-
-        gx = pp.make_trapezoid(channel='x',
-                               flat_area=self.Nx * self.dx,
-                               flat_time=self.dwell * self.Nx,
-                               system=self.sys)
-
-        tstart = pp.calc_duration(gz) / 2
-        areay = (-(np.arange(seq.Ny) - seq.Ny / 2) * seq.dy).tolist()
-        areaz = (-(np.arange(seq.Nz) - seq.Nz / 2) * seq.dz).tolist()
-
-        num_processes = multiprocessing.cpu_count()
-        pool = multiprocessing.Pool(processes=num_processes)
-
-        alpha_list = []
-        M01_list = []
-        M02_list = []
-        M11_list = []
-        M12_list = []
-        tstart_list = []
-        axis_list = []
-        for alpha in np.linspace(0, 0.5, 51):
-            alpha_list.extend([alpha for a in areay])
-            M01_list.extend(list(np.array(areay) / self.sys.gamma * 1e6))
-            M02_list.extend(list(np.array(areay) / self.sys.gamma * 1e6))
-            M11_list.extend([M1[1] * alpha for a in areay])
-            M12_list.extend([M1[1] * (alpha - 1) for a in areay])
-            tstart_list.extend([tstart for a in areay])
-            axis_list.extend(['y' for a in areay])
-        para_zip = list(
-            zip(np.array(alpha_list), np.array(M01_list), np.array(M02_list), np.array(M11_list), np.array(M12_list),
-                np.array(tstart_list), np.array(axis_list)))
-        results = pool.starmap(self.choose_alpha, para_zip)
-        pool.close()
-        pool.join()
-
-        pool = multiprocessing.Pool(processes=num_processes)
-        results = pd.DataFrame(results, columns=['alpha', 'M01', 'M02', 'M11', 'M12', 'd1', 'd2'])
-        results['maxtime'] = np.max([results['d1'], results['d2']])
-        maxtime_per_alpha = results.groupby('alpha')['maxtime'].max().reset_index()
-        miny = maxtime_per_alpha['maxtime'].min()
-        alphay = maxtime_per_alpha.loc[maxtime_per_alpha['maxtime'].idxmin(), 'alpha']
-        print("Y", alphay, miny)
-
-        alpha_list = []
-        M01_list = []
-        M02_list = []
-        M11_list = []
-        M12_list = []
-        tstart_list = []
-        axis_list = []
-        for alpha in np.linspace(0, 1, 101):
-            alpha_list.extend([alpha for a in areay])
-            M01_list.extend(list(np.array(areaz) / self.sys.gamma * 1e6 - M0z_reph))
-            M02_list.extend(list(np.array(areaz) / self.sys.gamma * 1e6 - M0z_reph))
-            M11_list.extend([M1[2] * alpha - M1z_reph for a in areay])
-            M12_list.extend([M1[2] * (alpha - 1) - M1z_reph for a in areay])
-            tstart_list.extend([tstart for a in areay])
-            axis_list.extend(['z' for a in areay])
-        para_zip = list(
-            zip(np.array(alpha_list), np.array(M01_list), np.array(M02_list), np.array(M11_list), np.array(M12_list),
-                np.array(tstart_list), np.array(axis_list)))
-        results = pool.starmap(self.choose_alpha, para_zip)
-        pool.close()
-        pool.join()
-
-        pool = multiprocessing.Pool(processes=num_processes)
-        results = pd.DataFrame(results, columns=['alpha', 'M01', 'M02', 'M11', 'M12', 'd1', 'd2'])
-        results['maxtime'] = np.max([results['d1'], results['d2']])
-        maxtime_per_alpha = results.groupby('alpha')['maxtime'].max().reset_index()
-        minz = maxtime_per_alpha['maxtime'].min()
-        alphaz = maxtime_per_alpha.loc[maxtime_per_alpha['maxtime'].idxmin(), 'alpha']
-        print("Z", alphaz, minz)
-
-        M0x_reph, M1x_reph = self.CalTrapM1(gx.amplitude / self.sys.gamma * 1e3,
-                                            gx.flat_time * 1000 / 2,
-                                            gx.rise_time * 1000,
-                                            (np.max([minz, miny]) + pp.calc_duration(gz) / 2) * 1000)
-        alpha_list = []
-        M01_list = []
-        M02_list = []
-        M11_list = []
-        M12_list = []
-        tstart_list = []
-        axis_list = []
-        for alpha in np.linspace(0, 1, 101):
-            alpha_list.extend([alpha for a in areay])
-            M01_list.extend([-M0x_reph for a in areay])
-            M02_list.extend([-M0x_reph for a in areay])
-            M11_list.extend([M1[0] * alpha - M1x_reph for a in areay])
-            M12_list.extend([M1[0] * (alpha - 1) - M1x_reph for a in areay])
-            tstart_list.extend([tstart for a in areay])
-            axis_list.extend(['x' for a in areay])
-        para_zip = list(
-            zip(np.array(alpha_list), np.array(M01_list), np.array(M02_list), np.array(M11_list), np.array(M12_list),
-                np.array(tstart_list), np.array(axis_list)))
-        results = pool.starmap(self.choose_alpha, para_zip)
-        pool.close()
-        pool.join()
-
-        results = pd.DataFrame(results, columns=['alpha', 'M01', 'M02', 'M11', 'M12', 'd1', 'd2'])
-        results['maxtime'] = np.max([results['d1'], results['d2']])
-        maxtime_per_alpha = results.groupby('alpha')['maxtime'].max().reset_index()
-        minx = maxtime_per_alpha['maxtime'].min()
-        alphax = maxtime_per_alpha.loc[maxtime_per_alpha['maxtime'].idxmin(), 'alpha']
-        print("X", alphax, minx)
-
-        t_vel = np.max([minx, miny, minz])
-        self.t_vel = math.ceil(t_vel / self.seq.grad_raster_time) * self.seq.grad_raster_time
-        self.TE = math.ceil(
-            (gz.fall_time + gz.flat_time / 2 + t_vel + pp.calc_duration(gx) / 2) / self.seq.grad_raster_time) \
-                  * self.seq.grad_raster_time
-        self.alphas = [alphax, alphay, alphaz]
-        print(self.t_vel, self.TE, self.alphas)
-
-    def prep_nonc(self, The_list, Phi_list, M1):
+    def prep(self, The_list, Phi_list, M1):
         rf_1, gz, _ = pp.make_sinc_pulse(
             flip_angle=self.FA * np.pi / 180,
             duration=0.6e-3,
@@ -386,10 +257,6 @@ class MRISequence:
         alphaz = maxtime_per_alpha.loc[maxtime_per_alpha['maxtime'].idxmin(), 'alpha']
         print("Z", alphaz, minz)
 
-        M0x_reph, M1x_reph = self.CalTrapM1(gx.amplitude / self.sys.gamma * 1e3,
-                                            gx.flat_time * 1000 / 2,
-                                            gx.rise_time * 1000,
-                                            (np.max([minz, miny]) + pp.calc_duration(gz) / 2) * 1000)
         alpha_list = []
         M01_list = []
         M02_list = []
@@ -445,107 +312,7 @@ class MRISequence:
         self.alphas = [alphax, alphay, alphaz]
         print(self.t_vel, self.TE, self.alphas)
 
-    def make_tr(self, areay, areaz, M1s, plot=False, labels=None):
-        # RF pulse
-        rf_1, gz, _ = pp.make_sinc_pulse(
-            flip_angle=self.FA * np.pi / 180,
-            duration=0.6e-3,
-            slice_thickness=self.FOVz,
-            apodization=0.42,
-            time_bw_product=self.tbw,
-            system=self.sys,
-            return_gz=True
-        )
-        tstart = pp.calc_duration(gz) / 2
-
-        gx = pp.make_trapezoid(channel='x',
-                               flat_area=self.Nx * self.dx,
-                               flat_time=self.dwell * self.Nx,
-                               system=self.sys)
-        adc = pp.make_adc(num_samples=self.Nx,
-                          delay=gx.rise_time,
-                          duration=gx.flat_time,
-                          system=self.sys)
-
-        # Spoil
-        # gy_reph = pp.make_trapezoid(channel='y', area=-areay, system=self.sys)
-        gx_spoil = pp.make_trapezoid(channel='x', area=self.Nx * self.dx, system=self.sys)
-        gz_spoil = pp.make_trapezoid(channel='z', area=4 / self.dz - areaz, system=self.sys)
-        # Flow gy
-        M0y = areay / self.sys.gamma * 1e6
-
-        y_moment_params = [
-            [0, 0, tstart, -1, -1, M0y, 1.0e-6],
-            [0, 1, tstart, -1, -1, M1s[1], 1.0e-6]
-        ]
-
-        gy_vel = self.make_gradient_fixedTE('y', y_moment_params, self.t_vel)
-        # gy_vel = self.make_gradient('y', y_moment_params)
-
-        # Flow gx
-        M0x_reph, M1x_reph = self.CalTrapM1(gx.amplitude / self.sys.gamma * 1e3,
-                                            gx.flat_time * 1000 / 2,
-                                            gx.rise_time * 1000,
-                                            (self.TE - pp.calc_duration(gx) / 2) * 1000)
-
-        x_moment_params = [
-            [0, 0, tstart, -1, -1, -M0x_reph, 1.0e-6],
-            [0, 1, tstart, -1, -1, (M1s[0] - M1x_reph), 1.0e-6]
-        ]
-        gx_vel = self.make_gradient_fixedTE('x', x_moment_params, self.t_vel)
-        # gx_vel = self.make_gradient('x', x_moment_params)
-
-        # Flow gz
-        M0z_reph, M1z_reph = self.CalTrapM1(gz.amplitude / self.sys.gamma * 1e3,
-                                            gz.flat_time * 1000 / 2,
-                                            gz.rise_time * 1000,
-                                            0.00,
-                                            second_half=True)
-
-        M1z_total = M1s[2] - M1z_reph
-        M0z_ex = (areaz) / (self.sys.gamma) * 1e6
-        M0z_total = M0z_ex - M0z_reph
-
-        z_moment_params = [
-            [0, 0, tstart, -1, -1, M0z_total, 1.0e-6],
-            [0, 1, tstart, -1, -1, M1z_total, 1.0e-6]
-        ]
-        gz_vel = self.make_gradient_fixedTE('z', z_moment_params, self.t_vel)
-        # gz_vel = self.make_gradient('z', z_moment_params)
-        # spoiling
-
-        t_vel = np.max([pp.calc_duration(gx_vel), pp.calc_duration(gy_vel), pp.calc_duration(gz_vel)])
-        self.TR = math.ceil(
-            (pp.calc_duration(gz) + t_vel + pp.calc_duration(gx) + np.max([
-                pp.calc_duration(gx_spoil),
-                pp.calc_duration(gz_spoil)]))
-            / self.seq.grad_raster_time) \
-                  * self.seq.grad_raster_time
-
-        adc.dwell = np.round(adc.dwell / self.seq.adc_raster_time) * self.seq.adc_raster_time
-        # assemble sequence
-
-        rf_1.phase_offset = self.rf_phase / 180 * np.pi
-        adc.phase_offset = self.rf_phase / 180 * np.pi
-        self.rf_inc = np.mod(self.rf_inc + self.RF_SPOIL_INC, 360.0)
-        self.rf_phase = np.mod(self.rf_phase + self.rf_inc, 360.0)
-
-        # Add blocks to sequence
-        self.seq.add_block(rf_1, gz)
-        self.seq.add_block(gx_vel, gy_vel, gz_vel)
-        if labels != None:
-            self.seq.add_block(gx, adc, *labels)
-        else:
-            self.seq.add_block(gx, adc)
-        spoil_block_contents = [gx_spoil, gz_spoil]
-        self.seq.add_block(*spoil_block_contents)
-        # print(pp.calc_duration(gy_vel), pp.calc_duration(gx_vel), pp.calc_duration(gz_vel))
-        # print(pp.calc_duration(gx), pp.calc_duration(adc))
-        # print(pp.calc_duration(gy_reph), pp.calc_duration(gx_spoil), pp.calc_duration(gz_spoil))
-        if plot:
-            self.seq.plot(grad_disp='mT/m')
-
-    def make_tr_nonc(self, The, Phi, M1s, plot=False, labels=None):
+    def make_tr(self, The, Phi, M1s, plot=False, labels=None):
         # RF pulse
         rf_1, gz, _ = pp.make_sinc_pulse(
             flip_angle=self.FA * np.pi / 180,
@@ -740,7 +507,7 @@ if __name__ == "__main__":
     PLOT_KSPACE = False
     HEART_RATE = 70
     Nxyz = [64, 64, 64]
-    FOV = [320e-3, 320e-3, 320e-3]
+    FOV = [256e-3, 256e-3, 256e-3]
     VENC = [150, 150, 150,]
     seq = MRISequence(
         TE=3e-3,
@@ -794,7 +561,7 @@ if __name__ == "__main__":
     # seq.TE = 0.00298
     # seq.t_vel = 0.00178
 
-    seq.prep_nonc(The_list, Phi_list, TargetM1)
+    seq.prep(The_list, Phi_list, TargetM1)
     # seq.alphas = [0, 0, 0]
     # seq.TE = 0.00274
     # seq.t_vel = 0.00171
@@ -806,24 +573,12 @@ if __name__ == "__main__":
         [TargetM1[0] * alphas[0], TargetM1[1] * (alphas[1] - 1), TargetM1[2] * alphas[2]],
         [TargetM1[0] * alphas[0], TargetM1[1] * alphas[1], TargetM1[2] * (alphas[2] - 1)],
     ]
-    # for islice in tqdm(range(len(areaz))):
-    #     for iphase in tqdm(range(len(areay))):
-    #         labels = []
-    #         labels.append(pp.make_label(type="SET", label="PAR", value=islice))
-    #         labels.append(pp.make_label(type="SET", label="LIN", value=iphase))
-    #         for tr_index in range(len(M1s)):
-    #             # if islice == len(areaz) - 1 and iphase == len(areay) - 1 and tr_index == len(M1s) -1:
-    #                 # ifplot = True
-    #             labels.append(pp.make_label(type="SET", label="SET", value=tr_index))
-    #             seq.make_tr(areay[iphase], areaz[islice], M1s=M1s[tr_index], labels=labels)
-    #             labels.pop()
     for i in tqdm(range(len(The_list))):
-        # for i in range(4):
         for tr_index in range(4):
             if i==0 and tr_index == 3:
-                seq.make_tr_nonc(The_list[i], Phi_list[i], M1s=M1s[tr_index], plot=True)
+                seq.make_tr(The_list[i], Phi_list[i], M1s=M1s[tr_index], plot=True)
             else:
-                seq.make_tr_nonc(The_list[i], Phi_list[i], M1s=M1s[tr_index], plot=False)
+                seq.make_tr(The_list[i], Phi_list[i], M1s=M1s[tr_index], plot=False)
 
     print(seq.TE, seq.TR)
     print("TE, TR", seq.TE, seq.TR)
